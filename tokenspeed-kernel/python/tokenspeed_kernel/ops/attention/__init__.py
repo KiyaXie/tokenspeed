@@ -3103,6 +3103,8 @@ def mla_decode_with_kvcache(
     # optional projected-value epilogue
     value_weight: torch.Tensor | None = None,
     gate: torch.Tensor | None = None,
+    *,
+    window_left: int = -1,
 ) -> AttentionResult:
     """MLA absorbed decode over compressed paged MLA KV cache.
 
@@ -3133,6 +3135,7 @@ def mla_decode_with_kvcache(
         kv_lora_rank: MLA latent rank R. The output head dim is R.
         qk_rope_head_dim: RoPE q/k head dim.
         softmax_scale: Scale applied to QK logits before softmax.
+        window_left: Exclusive left sliding-window size. -1 means full attention.
         logit_cap: Optional soft cap applied to attention logits.
         return_lse: Whether to also return log-sum-exp values.
         out: Optional output tensor with shape [batch, q_len, num_q_heads,
@@ -3155,6 +3158,8 @@ def mla_decode_with_kvcache(
         raise ValueError("gate requires value_weight")
 
     projected_value = value_weight is not None
+    if window_left >= 0 and projected_value:
+        raise ValueError("sliding-window MLA decode does not support projected value")
     if projected_value:
         if q.ndim != 4 or q.shape[1] != 1:
             raise ValueError(
@@ -3212,9 +3217,12 @@ def mla_decode_with_kvcache(
         )
     else:
         signature = _attention_format_signature(q=q, kv_cache=kv_cache)
-    dispatch_mode = (
-        "mla_decode_projected_value" if projected_value else "mla_decode_with_kvcache"
-    )
+    if projected_value:
+        dispatch_mode = "mla_decode_projected_value"
+    elif window_left >= 0:
+        dispatch_mode = "mla_sliding_with_kvcache"
+    else:
+        dispatch_mode = "mla_decode_with_kvcache"
     try:
         kernel = select_kernel(
             "attention",
@@ -3252,7 +3260,7 @@ def mla_decode_with_kvcache(
         signature = _attention_format_signature(q=q, kv_cache=kv_cache)
         kernel = select_kernel(
             "attention",
-            "mla_decode_with_kvcache",
+            dispatch_mode,
             signature,
             traits=traits,
             solution=solution,
@@ -3281,6 +3289,7 @@ def mla_decode_with_kvcache(
         shape_params,
     )
 
+    sliding_kwargs = {"window_left": window_left} if window_left >= 0 else {}
     with kernel_scope(
         "attention",
         dispatch_mode,
@@ -3317,6 +3326,7 @@ def mla_decode_with_kvcache(
             logit_cap=logit_cap,
             return_lse=return_lse,
             out=out,
+            **sliding_kwargs,
         )
 
 

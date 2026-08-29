@@ -76,6 +76,7 @@ _MLA_ARCHITECTURES = frozenset(
         "K3DSparkModel",
     }
 )
+_DOTS3_NOTE_ARCHITECTURES = frozenset({"Dots3NoteForCausalLM"})
 _DSA_ARCHITECTURES = frozenset(
     {
         "GlmMoeDsaForCausalLM",
@@ -103,6 +104,7 @@ class AttentionArch(IntEnum):
     MHA = auto()
     DSA = auto()
     MSA = auto()
+    DOTS3_NOTE = auto()
 
 
 @dataclass(frozen=True)
@@ -165,6 +167,56 @@ def configure_deepseek_v4_attention(model_config) -> None:
         scaling_factor = rope_scaling["factor"]
         mscale = yarn_get_mscale(scaling_factor, float(mscale_all_dim))
         model_config.scaling = model_config.scaling * mscale * mscale
+
+
+def configure_dots3_note_attention(model_config) -> None:
+    """Derive the full-DSA and sliding-MLA geometry for Dots3 Note."""
+
+    config = model_config.hf_text_config
+    required_fields = (
+        "kv_lora_rank",
+        "qk_nope_head_dim",
+        "qk_rope_head_dim",
+        "v_head_dim",
+        "index_topk",
+        "index_head_dim",
+        "index_n_heads",
+        "swa_num_attention_heads",
+        "swa_num_key_value_heads",
+        "swa_q_lora_rank",
+        "swa_kv_lora_rank",
+        "swa_qk_nope_head_dim",
+        "swa_qk_rope_head_dim",
+        "swa_v_head_dim",
+        "sliding_window_size",
+    )
+    missing_fields = [field for field in required_fields if not hasattr(config, field)]
+    if missing_fields:
+        raise ValueError(
+            "Dots3 Note attention config is missing required fields: "
+            + ", ".join(missing_fields)
+        )
+
+    model_config.attention_arch = AttentionArch.DOTS3_NOTE
+    model_config.head_dim = config.qk_nope_head_dim + config.qk_rope_head_dim
+    model_config.kv_lora_rank = config.kv_lora_rank
+    model_config.qk_nope_head_dim = config.qk_nope_head_dim
+    model_config.qk_rope_head_dim = config.qk_rope_head_dim
+    model_config.v_head_dim = config.v_head_dim
+    model_config.index_topk = config.index_topk
+    model_config.index_head_dim = config.index_head_dim
+    model_config.index_n_heads = config.index_n_heads
+    model_config.index_topk_pattern = getattr(config, "index_topk_pattern", None)
+    model_config.scaling = 1 / math.sqrt(model_config.head_dim)
+
+    model_config.swa_num_attention_heads = config.swa_num_attention_heads
+    model_config.swa_num_key_value_heads = config.swa_num_key_value_heads
+    model_config.swa_q_lora_rank = config.swa_q_lora_rank
+    model_config.swa_kv_lora_rank = config.swa_kv_lora_rank
+    model_config.swa_qk_nope_head_dim = config.swa_qk_nope_head_dim
+    model_config.swa_qk_rope_head_dim = config.swa_qk_rope_head_dim
+    model_config.swa_v_head_dim = config.swa_v_head_dim
+    model_config.sliding_window_size = config.sliding_window_size
 
 
 def configure_glm_attention(model_config) -> None:
@@ -247,6 +299,13 @@ def configure_minimax_m3_attention(model_config) -> None:
 
 _ATTENTION_FAMILY_SPECS = (
     _AttentionFamilySpec(
+        name="Dots3 Note",
+        architectures=_DOTS3_NOTE_ARCHITECTURES,
+        configure=configure_dots3_note_attention,
+        default_backend="dots3_note",
+        default_prefix_granularity=64,
+    ),
+    _AttentionFamilySpec(
         name="DeepSeek V4",
         architectures=_DEEPSEEK_V4_ARCHITECTURES,
         configure=configure_deepseek_v4_attention,
@@ -302,6 +361,11 @@ def _apply_attention_family_defaults(
     server_args: ServerArgs,
     spec: _AttentionFamilySpec,
 ) -> None:
+    if spec.name == "Dots3 Note":
+        server_args.disable_prefill_graph = True
+        server_args.disable_autotune = True
+        server_args.enable_prefix_caching = False
+        server_args.disable_kvstore = True
     if spec.default_prefix_granularity is not None:
         granularity_default = ServerArgs.__dataclass_fields__[
             "prefix_granularity"
@@ -842,6 +906,7 @@ def is_multimodal_model(model_architectures: list[str] | None):
         "KimiK3ForConditionalGeneration",
         "InklingForConditionalGeneration",
         "MiniMaxM3SparseForConditionalGeneration",
+        "Dots3NoteForCausalLM",
     }
     return any(arch in multimodal_architectures for arch in model_architectures or [])
 
@@ -859,6 +924,7 @@ def is_audio_model(model_architectures: list[str] | None):
         "InklingForConditionalGeneration",
         "Qwen3OmniMoeForConditionalGeneration",
         "Qwen3ASRForConditionalGeneration",
+        "Dots3NoteForCausalLM",
     }
     return any(arch in audio_architectures for arch in model_architectures or [])
 

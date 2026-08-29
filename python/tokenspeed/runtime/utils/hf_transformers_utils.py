@@ -45,6 +45,7 @@ from transformers.utils import cached_file
 
 from tokenspeed.runtime.configs import (
     DeepseekV4Config,
+    Dots3NoteConfig,
     InklingMMConfig,
     InklingModelConfig,
     KimiK2Config,
@@ -74,6 +75,7 @@ _CONFIG_REGISTRY: dict[str, type[PretrainedConfig]] = {
     Qwen3MoeConfig.model_type: Qwen3MoeConfig,
     Qwen3ASRConfig.model_type: Qwen3ASRConfig,
     DeepseekV4Config.model_type: DeepseekV4Config,
+    Dots3NoteConfig.model_type: Dots3NoteConfig,
     Qwen3_5Config.model_type: Qwen3_5Config,
     Qwen3_5MoeConfig.model_type: Qwen3_5MoeConfig,
     Qwen3_5MoeTextConfig.model_type: Qwen3_5MoeTextConfig,

@@ -32,6 +32,9 @@ from tokenspeed.runtime.configs.model_config import (
     is_qwen4_exp,
 )
 from tokenspeed.runtime.layers.attention.configs.base import BaseAttnConfig
+from tokenspeed.runtime.layers.attention.configs.dots3_note import (
+    Dots3NoteAttentionConfig,
+)
 from tokenspeed.runtime.layers.attention.configs.dsa import DSAConfig
 from tokenspeed.runtime.layers.attention.configs.mha import MHAConfig
 from tokenspeed.runtime.layers.attention.configs.mla import MLAConfig
@@ -73,6 +76,8 @@ def _ordinary_cache_family(config: BaseAttnConfig | None) -> CacheModelFamily | 
         return "mha"
     if type(config) is MLAConfig:
         return "mla"
+    if isinstance(config, Dots3NoteAttentionConfig):
+        return "dots3_note"
     if isinstance(config, DSAConfig):
         return "dsa"
     if isinstance(config, MSAConfig):
@@ -216,6 +221,8 @@ def _get_default_backend_name(arch: AttentionArch) -> str:
         return "dsa"
     if arch == AttentionArch.MSA:
         return "msa"
+    if arch == AttentionArch.DOTS3_NOTE:
+        return "dots3_note"
     else:
         return "mha"
 
@@ -276,6 +283,7 @@ _CONFIG_CLS: dict[AttentionArch, type[BaseAttnConfig]] = {
     AttentionArch.MLA: MLAConfig,
     AttentionArch.DSA: DSAConfig,
     AttentionArch.MSA: MSAConfig,
+    AttentionArch.DOTS3_NOTE: Dots3NoteAttentionConfig,
 }
 
 
@@ -819,6 +827,8 @@ def create_attn_components(
         cache_family = "mha"
     elif type(config) is MLAConfig:
         cache_family = "mla"
+    elif isinstance(config, Dots3NoteAttentionConfig):
+        cache_family = "dots3_note"
     elif isinstance(config, DSAConfig):
         cache_family = "dsa"
     elif isinstance(config, MSAConfig):

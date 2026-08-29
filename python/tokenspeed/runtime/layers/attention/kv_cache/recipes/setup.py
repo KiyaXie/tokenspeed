@@ -32,6 +32,9 @@ from tokenspeed.runtime.layers.attention.kv_cache.recipes.base import CacheRecip
 from tokenspeed.runtime.layers.attention.kv_cache.recipes.deepseek_v4 import (
     DeepseekV4Recipe,
 )
+from tokenspeed.runtime.layers.attention.kv_cache.recipes.dots3_note import (
+    Dots3NoteRecipe,
+)
 from tokenspeed.runtime.layers.attention.kv_cache.recipes.inkling import (
     InklingRecipe,
 )
@@ -62,6 +65,7 @@ CacheModelFamily = Literal[
     "inkling",
     "kimi_k3",
     "deepseek_v4",
+    "dots3_note",
 ]
 
 
@@ -163,6 +167,7 @@ _RECIPES: dict[CacheModelFamily, Callable[..., CacheRecipe]] = {
     "inkling": InklingRecipe,
     "kimi_k3": KimiK3Recipe,
     "deepseek_v4": DeepseekV4Recipe,
+    "dots3_note": Dots3NoteRecipe,
 }
 
 

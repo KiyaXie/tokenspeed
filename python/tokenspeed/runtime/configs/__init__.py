@@ -21,6 +21,7 @@
 """Runtime configuration exports."""
 
 from tokenspeed.runtime.configs.deepseek_v4_config import DeepseekV4Config
+from tokenspeed.runtime.configs.dots3_note_config import Dots3NoteConfig
 from tokenspeed.runtime.configs.inkling_config import (
     InklingAudioConfig,
     InklingMMConfig,
@@ -58,6 +59,7 @@ from tokenspeed.runtime.configs.qwen4_exp_config import (
 
 __all__ = [
     "DeepseekV4Config",
+    "Dots3NoteConfig",
     "Qwen2Config",
     "Qwen3Config",
     "Qwen3MoeConfig",

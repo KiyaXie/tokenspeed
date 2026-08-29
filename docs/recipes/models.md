@@ -6,6 +6,30 @@ set only the parameters that change runtime behavior.
 The commands below are templates. Validate exact model IDs, checkpoint formats,
 and backend choices against the build you deploy.
 
+## Dots3 Note Preview
+
+The Dots3 Note path supports the official BF16 checkpoint in text-only mode. It
+automatically selects the hybrid Dots3 backend, enables decode CUDA Graph, and
+disables kernel autotuning, prefill graph, prefix caching, and KVStore.
+Multimodal inputs, mixed batches, speculative decoding, PD, and quantized
+checkpoints are not yet supported.
+
+```bash
+ts serve \
+    --model dots-studio/dots3-note-prev \
+    --language-model-only \
+    --tensor-parallel-size 8 \
+    --dtype bfloat16 \
+    --kv-cache-dtype auto \
+    --trust-remote-code
+```
+
+Sliding MLA uses the `tokenspeed-kernel` compressed paged Triton path with the
+model's 513-token absolute window. Long-reasoning evaluations need a matching
+request and server limit: AIME25 was validated with `max_tokens=100000` and
+`--max-model-len 131072`. A `32768`-token completion limit truncates valid
+reasoning for this model and produces an artificially low score.
+
 ## Inkling
 
 Blog: https://lightseek.org/blog/tokenspeed-inkling.html

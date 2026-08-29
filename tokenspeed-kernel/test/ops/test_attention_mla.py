@@ -420,6 +420,129 @@ def test_mla_decode_with_kvcache(
 
 
 @pytest.mark.parametrize(
+    "cache_lens,q_len",
+    [
+        pytest.param([1028], 4, id="multi-query"),
+        pytest.param([1028], 1, id="single-decode"),
+        pytest.param([1, 64, 513, 1028], 1, id="batched-decode"),
+    ],
+)
+def test_mla_sliding_with_kvcache_absolute_page_table(
+    device: str,
+    require,
+    cache_lens: list[int],
+    q_len: int,
+) -> None:
+    require(
+        "attention",
+        "mla_sliding_with_kvcache",
+        "triton",
+        torch.bfloat16,
+        "q",
+    )
+    if not platform.is_nvidia:
+        pytest.skip("MLA sliding-window test requires CUDA")
+
+    torch.manual_seed(17)
+    batch_size = len(cache_lens)
+    num_heads = 8
+    kv_lora_rank = 1024
+    qk_nope_head_dim = 192
+    qk_rope_head_dim = 64
+    qk_head_dim = kv_lora_rank + qk_rope_head_dim
+    page_size = 64
+    window_left = 512
+    first_visible_pages = [
+        max(0, cache_len - q_len + 1 - (window_left + 1)) // page_size
+        for cache_len in cache_lens
+    ]
+    logical_pages = [
+        (cache_len + page_size - 1) // page_size for cache_len in cache_lens
+    ]
+    live_page_counts = [
+        pages - first_visible_page
+        for pages, first_visible_page in zip(
+            logical_pages, first_visible_pages, strict=True
+        )
+    ]
+    num_physical_pages = 1 + sum(live_page_counts)
+    max_pages = max(logical_pages)
+
+    q = torch.randn(
+        batch_size,
+        q_len,
+        num_heads,
+        qk_head_dim,
+        device=device,
+        dtype=torch.bfloat16,
+    )
+    kv_cache = torch.empty(
+        num_physical_pages,
+        page_size,
+        1,
+        qk_head_dim,
+        device=device,
+        dtype=torch.bfloat16,
+    )
+    kv_cache[0].fill_(float("nan"))
+    kv_cache[1:].normal_()
+    page_table = torch.zeros(
+        batch_size,
+        max_pages,
+        device=device,
+        dtype=torch.int32,
+    )
+    physical_pages = torch.randperm(num_physical_pages - 1, device=device) + 1
+    cursor = 0
+    for batch_idx, (first_page, end_page, count) in enumerate(
+        zip(first_visible_pages, logical_pages, live_page_counts, strict=True)
+    ):
+        page_table[batch_idx, first_page:end_page] = physical_pages[
+            cursor : cursor + count
+        ]
+        cursor += count
+    cache_seqlens = torch.tensor(cache_lens, device=device, dtype=torch.int32)
+    softmax_scale = 1.0 / math.sqrt(qk_nope_head_dim + qk_rope_head_dim)
+
+    out, lse = mla_decode_with_kvcache(
+        q=q,
+        kv_cache=kv_cache,
+        page_table=page_table,
+        cache_seqlens=cache_seqlens,
+        max_seqlen_k=max(cache_lens),
+        qk_nope_head_dim=qk_nope_head_dim,
+        kv_lora_rank=kv_lora_rank,
+        qk_rope_head_dim=qk_rope_head_dim,
+        softmax_scale=softmax_scale,
+        window_left=window_left,
+        return_lse=True,
+        solution="triton",
+    )
+
+    refs = []
+    ref_lses = []
+    for batch_idx, cache_len in enumerate(cache_lens):
+        batch_refs = []
+        batch_ref_lses = []
+        for query_idx in range(q_len):
+            visible_end = cache_len - q_len + query_idx + 1
+            visible_start = max(0, visible_end - (window_left + 1))
+            positions = torch.arange(visible_start, visible_end, device=device)
+            pages = page_table[batch_idx, positions // page_size].long()
+            kv = kv_cache[pages, positions % page_size, 0].float()
+            scores = torch.einsum("hd,kd->hk", q[batch_idx, query_idx].float(), kv)
+            scores *= softmax_scale
+            probs = torch.softmax(scores, dim=-1)
+            batch_refs.append(torch.matmul(probs, kv[:, :kv_lora_rank]))
+            batch_ref_lses.append(torch.logsumexp(scores, dim=-1))
+        refs.append(torch.stack(batch_refs))
+        ref_lses.append(torch.stack(batch_ref_lses))
+
+    torch.testing.assert_close(out.float(), torch.stack(refs), rtol=8e-2, atol=8e-2)
+    torch.testing.assert_close(lse, torch.stack(ref_lses), rtol=8e-2, atol=8e-2)
+
+
+@pytest.mark.parametrize(
     "dtype",
     [
         pytest.param(torch.float16, id="fp16"),
@@ -969,6 +1092,21 @@ def test_mla_decode_with_kvcache_rejects_invalid_projected_out() -> None:
             qk_rope_head_dim=2,
             softmax_scale=1.0,
             return_lse=True,
+            value_weight=weight,
+            out=torch.empty(2, 6),
+        )
+    with pytest.raises(ValueError, match="does not support projected value"):
+        mla_decode_with_kvcache(
+            q=q,
+            kv_cache=kv_cache,
+            page_table=page_table,
+            cache_seqlens=cache_seqlens,
+            max_seqlen_k=8,
+            qk_nope_head_dim=2,
+            kv_lora_rank=4,
+            qk_rope_head_dim=2,
+            softmax_scale=1.0,
+            window_left=0,
             value_weight=weight,
             out=torch.empty(2, 6),
         )

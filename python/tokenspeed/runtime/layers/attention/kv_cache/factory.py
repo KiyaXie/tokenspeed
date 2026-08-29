@@ -76,6 +76,30 @@ def create_cache_pool(
     merged plan's global layer window, so a draft view names the
     continuation fields the target's plan already reserved.
     """
+    if spec.family == "dots3_note":
+        from tokenspeed.runtime.layers.attention.configs.dots3_note import (
+            Dots3NoteAttentionConfig,
+        )
+        from tokenspeed.runtime.layers.attention.kv_cache.dots3_note import (
+            Dots3NoteTokenToKVPool,
+        )
+
+        if not isinstance(config, Dots3NoteAttentionConfig):
+            raise TypeError("Dots3 Note cache spec requires Dots3NoteAttentionConfig")
+        return Dots3NoteTokenToKVPool(
+            arena,
+            dtype=config.kv_cache_dtype,
+            model_dtype=config.dtype,
+            quant_method=config.kv_cache_quant_method,
+            kv_lora_rank=config.kv_lora_rank,
+            qk_rope_head_dim=config.qk_rope_head_dim,
+            swa_kv_lora_rank=config.swa_kv_lora_rank,
+            swa_qk_rope_head_dim=config.swa_qk_rope_head_dim,
+            layer_num=num_layers,
+            rank=rank,
+            index_head_dim=config.index_head_dim,
+            field_layer_offset=field_layer_offset,
+        )
     if spec.family == "deepseek_v4":
         from tokenspeed.runtime.layers.attention.kv_cache.hybrid_deepseek_v4 import (
             HybridDeepseekV4TokenToKVPool,

@@ -539,7 +539,9 @@ class ModelExecutor:
             runtime_states=self.runtime_states,
         )
         # Eager warmup can be DP-asymmetric; prewarm RSAG under uniform dummy inputs.
-        if config.enforce_eager:
+        if config.enforce_eager and getattr(
+            attn_backend, "supports_eager_comm_prewarm", True
+        ):
             logger.info("Prewarming Triton RSAG communication states")
             self.forward_step.prewarm_comm_states(batch_sizes=(1,))
             logger.info("Finished prewarming Triton RSAG communication states")

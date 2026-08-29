@@ -37,6 +37,7 @@ if platform.is_nvidia:
         tokenspeed_mla,
     )
 
+from tokenspeed.runtime.layers.attention.backends import dots3_note  # noqa: F401
 from tokenspeed.runtime.layers.attention.backends import dsa  # noqa: F401
 from tokenspeed.runtime.layers.attention.backends import mha  # noqa: F401
 from tokenspeed.runtime.layers.attention.backends import mla  # noqa: F401
