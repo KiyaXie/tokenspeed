@@ -356,7 +356,6 @@ def test_residual_family_exports_and_modes():
         "mhc_mixes",
         "mhc_post",
         "mhc_pre",
-        "select_gated_residual_mix_kernel",
     }
     assert set(_residual_pkg.__all__) == expected_exports
     residual_modes = {
