@@ -414,7 +414,10 @@ def _moe_api(impl, routing_modes, deferred):
         pdl_enabled=lambda: False,
     )
     return _functions(
-        KERNEL / "ops/moe/__init__.py", None, ("moe_plan", "moe_apply"), namespace
+        KERNEL / "ops/moe/__init__.py",
+        None,
+        ("moe_plan", "_select_moe_apply", "moe_apply"),
+        namespace,
     )
 
 
@@ -493,7 +496,7 @@ def _situ_backend(calls, fail, tuning):
         _register_mxfp4_situ_kernel=lambda fn: fn,
     )
     backend = _functions(
-        KERNEL / "ops/moe/flashinfer/trtllm_mxfp4.py",
+        KERNEL / "ops/moe/flashinfer.py",
         None,
         (
             "_autotune_mxfp4_situ_moe",
@@ -653,7 +656,7 @@ def test_situ_shared_launcher_preserves_ep_routing_and_return_contract(
     )
     fi = Mock(return_value=output if finalize else deferred)
     backend = _functions(
-        KERNEL / "ops/moe/flashinfer/trtllm_mxfp4.py",
+        KERNEL / "ops/moe/flashinfer.py",
         None,
         (
             "_local_expert_range",
@@ -1213,6 +1216,28 @@ def test_decode_gemv_selection_obeys_shape_traits(m, n, k, on_cuda, expected):
         fallback
     )
     registry.get_for_operator.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "m,k,routed",
+    [
+        (1, 7168, True),
+        (1, 2048, True),
+        (1, 16384, True),
+        (1, 65537, False),
+        (8, 7168, True),
+        (8, 8192, False),
+        (12, 4096, True),
+        (16, 16384, False),
+    ],
+)
+def test_fp32_rowcta_routing_bounds_k(m, k, routed):
+    api = _functions(
+        KERNEL / "ops/gemm/triton_gemv.py", None, ("_fp32_rowcta_k_fits",), {}
+    )
+    # A direct call takes any width, but the registry sends a second 64K block
+    # for one row, and more than 15 blocks of 512 for more rows, to Torch.
+    assert api._fp32_rowcta_k_fits(m, 256, k) is routed
 
 
 @pytest.mark.parametrize(

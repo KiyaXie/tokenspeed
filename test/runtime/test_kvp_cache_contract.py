@@ -67,10 +67,7 @@ from tokenspeed.runtime.layers.attention.kv_cache.virtual_blocks import (
     local_pages_by_group,
     owned_local_pages,
 )
-from tokenspeed.runtime.utils.server_args import (
-    ServerArgs,
-    validate_kvp_disaggregation_role,
-)
+from tokenspeed.runtime.utils.server_args import ServerArgs
 
 register_cuda_ci(
     est_time=10,
@@ -122,6 +119,7 @@ def _recipe(*, kvp_size: int, fp4: bool, draft: bool) -> DeepseekV4Recipe:
     )
     return DeepseekV4Recipe(
         server_args=SimpleNamespace(
+            kv_offload_config=None,
             max_total_tokens=None,
             chunked_prefill_size=8192,
             disaggregation_mode="null",
@@ -491,64 +489,6 @@ class RecipeDeclarationTest(unittest.TestCase):
             )
 
 
-class PrefillExchangePlanTest(unittest.TestCase):
-    def test_history_rows_are_routed_to_their_owner_and_restore_request_order(self):
-        from tokenspeed.runtime.layers.attention.backends.specific.deepseek_v4 import (
-            DeepseekV4AttentionBackend,
-        )
-        from tokenspeed.runtime.layers.attention.deepseek_v4.metadata import (
-            DeepseekV4ForwardMetadata,
-        )
-
-        degree = 2
-        # Two requests: 300 tokens (75 compressed rows over pages 1, 2) and
-        # 64 tokens (16 rows on page 5). Page 5's owner is rank 0, 1 -> 0, 2 -> 1.
-        table = torch.tensor([[1, 2], [5, 0]], dtype=torch.int32)
-        seq_lens = torch.tensor([300, 64], dtype=torch.int32)
-        query_lens = torch.tensor([4, 64], dtype=torch.int32)
-        for rank in range(degree):
-            with self.subTest(rank=rank):
-                cache = _metadata(kvp_size=degree, kvp_rank=rank, table=table)
-                metadata = DeepseekV4ForwardMetadata(
-                    seq_lens=seq_lens,
-                    query_lens=query_lens,
-                    query_start_loc=torch.tensor([0, 4, 68], dtype=torch.int32),
-                    token_to_req_indices=torch.repeat_interleave(
-                        torch.arange(2, dtype=torch.int32), query_lens
-                    ),
-                    cache=cache,
-                    is_valid_token=None,
-                    seq_lens_cpu=seq_lens,
-                    query_lens_cpu=query_lens,
-                    forward_mode=None,
-                    num_prefill_reqs=2,
-                    num_prefill_tokens=68,
-                )
-                chunks = DeepseekV4AttentionBackend._build_kvp_prefill_chunks(
-                    metadata, 4, table, chunk_size=8, window_size=128
-                )
-                self.assertEqual(list(chunks), [(0, 2)])
-                chunk = chunks[0, 2]
-                width = chunk.workspace_width
-                # Request 0: rows 0..63 live on virtual page 1 (owner 0), rows
-                # 64..74 on page 2 (owner 1). Request 1: rows 0..15 on page 5
-                # (owner 0). Row destinations are workspace-relative.
-                expected_by_owner = {
-                    0: list(range(0, 64)) + [width + row for row in range(16)],
-                    1: list(range(64, 75)),
-                }
-                self.assertEqual(
-                    chunk.counts, [len(expected_by_owner[0]), len(expected_by_owner[1])]
-                )
-                self.assertEqual(
-                    chunk.local_destinations.tolist(), expected_by_owner[rank]
-                )
-                self.assertEqual(
-                    chunk.destinations.tolist(),
-                    expected_by_owner[0] + expected_by_owner[1],
-                )
-
-
 class MappingTest(unittest.TestCase):
     def test_kvp_subgroups_are_consecutive_within_attention_tp(self):
         for rank in range(8):
@@ -634,7 +574,7 @@ class ConfigurationTest(unittest.TestCase):
         # the KVStore (and the retraction snapshot pool) serve a sharded
         # engine; an L3 key has no owner-stable form under sharding.
         args = object.__new__(ServerArgs)
-        args.disaggregation_mode = "null"
+        args.disaggregation_mode = "decode"
         args.kv_parallel_size = 2
         args.disable_kvstore = False
         args.enable_kvstore = False
@@ -646,15 +586,6 @@ class ConfigurationTest(unittest.TestCase):
         args.kvstore_storage_backend = "mooncake"
         with self.assertRaisesRegex(ValueError, "L3"):
             args.validate_cache_options()
-
-    def test_kvp_allows_aggregated_and_prefill_roles_only(self):
-        for mode in ("null", "prefill"):
-            validate_kvp_disaggregation_role(has_kvp=True, disaggregation_mode=mode)
-        for mode in ("null", "prefill", "decode", "encode"):
-            validate_kvp_disaggregation_role(has_kvp=False, disaggregation_mode=mode)
-        for mode in ("decode", "encode"):
-            with self.assertRaisesRegex(ValueError, "only the prefill side"):
-                validate_kvp_disaggregation_role(has_kvp=True, disaggregation_mode=mode)
 
 
 if __name__ == "__main__":

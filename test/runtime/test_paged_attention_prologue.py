@@ -61,7 +61,7 @@ _CONTEXT_KV_WRITERS = {
     "execution/drafter/dflash.py:DFlash._write_native_cache_fused_mla",
     "models/deepseek_v41_dspark.py:DeepseekV41DSparkModel._main_kv",
 }
-# Keys the prologue does not own: sparse indexers' and DeepSeek-V4's own attention.
+# Keys the prologue does not own: sparse indexers'.
 _OTHER_KEY_OWNERS = {
     "models/deepseek_v4.py:DeepseekV4Attention._project_q_kv",
     "models/dots3_note.py:Dots3NoteIndexer.forward",

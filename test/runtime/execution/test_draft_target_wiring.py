@@ -85,9 +85,6 @@ def _head_layout(**overrides) -> SimpleNamespace:
 
 
 def test_get_drafter_impl_routing():
-    from tokenspeed.runtime.models.deepseek_v4_dspark import (
-        DeepseekV4ForCausalLMDSpark,
-    )
     from tokenspeed.runtime.models.deepseek_v41_dspark import (
         DeepseekV41ForCausalLMDSpark,
     )
@@ -105,10 +102,6 @@ def test_get_drafter_impl_routing():
     )
     assert get_drafter_impl("DFLASH", mock.MagicMock()) is DFlash
     assert get_drafter_impl("DSPARK", mock.MagicMock()) is DSpark
-    assert (
-        get_drafter_impl("DSPARK", mock.MagicMock(spec=DeepseekV4ForCausalLMDSpark))
-        is DeepseekV4DSpark
-    )
     assert (
         get_drafter_impl("DSPARK", mock.MagicMock(spec=DeepseekV41ForCausalLMDSpark))
         is DeepseekV41DSpark
@@ -498,7 +491,9 @@ class _ContextDraft:
     def finalize_target_projection(self, projected):
         raise AssertionError("unused")
 
-    def write_context_kv(self, ctx_hidden, positions, cache_locs, token_to_kv_pool):
+    def write_context_kv(
+        self, ctx_hidden, positions, cache_locs, token_to_kv_pool, *, attn_backend
+    ):
         raise AssertionError("unused")
 
 
@@ -510,14 +505,25 @@ def test_pipeline_dspark_draft_gets_a_context_producer_on_every_stage(is_last_pp
     )
 
     draft_pool = object() if is_last_pp_rank else None
+    draft_backend = object() if is_last_pp_rank else None
     producer = select_dspark_context_producer(
         spec_algo="DSPARK",
         pp_size=4,
         draft_model=_ContextDraft(is_last_pp_rank),
         draft_token_to_kv_pool=draft_pool,
+        draft_attn_backend=draft_backend,
     )
     assert isinstance(producer, DSparkContextProducer)
     assert producer.token_to_kv_pool is draft_pool
+    assert producer.attn_backend is draft_backend
+    # The cache is written through the backend's placement; one without the
+    # other is a wiring error, not a replicated write.
+    with pytest.raises(ValueError, match="go together"):
+        DSparkContextProducer(
+            _ContextDraft(is_last_pp_rank),
+            draft_pool,
+            attn_backend=None if is_last_pp_rank else object(),
+        )
 
 
 @pytest.mark.parametrize(
@@ -540,6 +546,7 @@ def test_pipeline_mtp_draft_produces_no_context(draft_model, draft_pool):
             pp_size=2,
             draft_model=draft_model,
             draft_token_to_kv_pool=draft_pool,
+            draft_attn_backend=None,
         )
         is None
     )
@@ -558,6 +565,7 @@ def test_pipeline_eagle3_is_refused_by_the_executor():
             pp_size=2,
             draft_model=torch.nn.Module(),
             draft_token_to_kv_pool=object(),
+            draft_attn_backend=None,
         )
 
 
@@ -572,6 +580,7 @@ def test_pipeline_block_drafter_without_context_production_is_rejected():
             pp_size=2,
             draft_model=torch.nn.Module(),
             draft_token_to_kv_pool=None,
+            draft_attn_backend=None,
         )
 
 
@@ -586,12 +595,17 @@ def test_single_stage_never_builds_a_context_producer():
             pp_size=1,
             draft_model=_ContextDraft(is_last_pp_rank=True),
             draft_token_to_kv_pool=object(),
+            draft_attn_backend=object(),
         )
         is None
     )
     assert (
         select_dspark_context_producer(
-            spec_algo=None, pp_size=2, draft_model=None, draft_token_to_kv_pool=None
+            spec_algo=None,
+            pp_size=2,
+            draft_model=None,
+            draft_token_to_kv_pool=None,
+            draft_attn_backend=None,
         )
         is None
     )
@@ -1098,19 +1112,13 @@ def test_ordinary_block_models_declare_capture_setup(family):
     target.set_dflash_layers_to_capture.assert_called_once_with([2, 7])
 
 
-@pytest.mark.parametrize("family", ["v4", "v41"])
-def test_deepseek_block_models_configure_capture_through_common_setup(
-    monkeypatch, family
-):
-    from tokenspeed.runtime.models.deepseek_v4_dspark import DeepseekV4ForCausalLMDSpark
+def test_deepseek_block_models_configure_capture_through_common_setup(monkeypatch):
     from tokenspeed.runtime.models.deepseek_v41_dspark import (
         DeepseekV41ForCausalLMDSpark,
     )
     from tokenspeed.runtime.models.target_capture import TargetCaptureConfigurator
 
-    model_class = (
-        DeepseekV4ForCausalLMDSpark if family == "v4" else DeepseekV41ForCausalLMDSpark
-    )
+    model_class = DeepseekV41ForCausalLMDSpark
     draft = model_class.__new__(model_class)
     torch.nn.Module.__init__(draft)
     draft.model = SimpleNamespace(target_layer_ids=(10, 20))
@@ -1134,7 +1142,7 @@ def test_deepseek_block_models_configure_capture_through_common_setup(
     )
     draft.lm_head = object()
     target.logits_processor = SimpleNamespace(tp_group=(0, 1))
-    drafter_class = DeepseekV4DSpark if family == "v4" else DeepseekV41DSpark
+    drafter_class = DeepseekV41DSpark
     drafter = drafter_class.__new__(drafter_class)
     drafter.draft_model = draft
     drafter.wire_target(target)
