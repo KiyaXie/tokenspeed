@@ -141,8 +141,9 @@ def test_history_and_draft_fields_share_the_planned_arena(
     groups = {spec.group_id: spec for spec, _ in recipe.groups()}
     assert len(groups) == 2
     assert groups["dsa"].block_granularity == 64
-    assert groups["dsa"].retention == "full_history"
+    assert groups["dsa"].attn_kind == "full_history"
     assert groups["swa"].block_granularity == 32
+    assert groups["swa"].attn_kind == "sliding_window"
     assert groups["swa"].sliding_window_tokens == 513
     assert not any(spec.replayable for spec in groups.values())
     if pd:

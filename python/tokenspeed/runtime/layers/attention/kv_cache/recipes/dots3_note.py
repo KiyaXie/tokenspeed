@@ -130,12 +130,11 @@ class Dots3NoteRecipe(CacheRecipe):
         specs = [
             CacheGroupSpec(
                 group_id=gid,
-                retention="full_history" if gid == "dsa" else "sliding_window",
+                attn_kind="full_history" if gid == "dsa" else "sliding_window",
                 rows_per_page=rows,
                 entry_stride_tokens=1,
                 sliding_window_tokens=None if gid == "dsa" else 513,
                 replayable=False,
-                family="history",
             )
             for gid, rows in (("dsa", 64), ("swa", 32))
         ]
