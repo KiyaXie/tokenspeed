@@ -101,6 +101,7 @@ def _recipe(*, draft_layers: int, pd: bool):
     )
     return Dots3NoteRecipe(
         server_args=SimpleNamespace(
+            kv_offload_config=None,
             max_total_tokens=None,
             chunked_prefill_size=512,
             disaggregation_mode="prefill" if pd else "null",
